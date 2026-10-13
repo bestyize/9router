@@ -7,6 +7,26 @@ function generateUUID() {
   return crypto.randomUUID();
 }
 
+// Move image data URLs embedded in tool output out of JSON/text and into native
+// Gemini image parts. Otherwise the base64 is counted as ordinary context text.
+function extractInlineImages(value, images = []) {
+  if (typeof value === "string") {
+    const dataUrl = /data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)/g;
+    const text = value.replace(dataUrl, (_match, mimeType, data) => {
+      images.push({ inlineData: { mimeType, data: data.replace(/\s/g, "") } });
+      return "[image attached separately]";
+    });
+    return text;
+  }
+  if (Array.isArray(value)) return value.map((item) => extractInlineImages(item, images));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, extractInlineImages(item, images)])
+    );
+  }
+  return value;
+}
+
 import {
   DEFAULT_SAFETY_SETTINGS,
   convertOpenAIContentToParts,
@@ -258,6 +278,9 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
                 parsedResp = { result: parsedResp };
               }
 
+              const inlineImages = [];
+              parsedResp = extractInlineImages(parsedResp, inlineImages);
+
               toolParts.push({
                 functionResponse: {
                   // Matches the functionCall id emitted above, so a response
@@ -267,6 +290,7 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
                   response: { result: parsedResp }
                 }
               });
+              toolParts.push(...inlineImages);
             }
             if (toolParts.length > 0) {
               result.contents.push({ role: GEMINI_ROLE.USER, parts: toolParts });
