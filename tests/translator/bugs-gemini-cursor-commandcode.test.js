@@ -9,17 +9,29 @@ const O2C = (body) => translateRequest(FORMATS.OPENAI, FORMATS.CURSOR, "m", body
 const O2CC = (body) => translateRequest(FORMATS.OPENAI, FORMATS.COMMANDCODE, "m", body, true, null, "commandcode");
 
 describe("OpenAI → Gemini", () => {
-  // openai-to-gemini.js:92-96 — each system message overwrites systemInstruction → only last kept
-  // KNOWN BUG
-  it.fails("multiple system messages are all kept", () => {
+  it("preserves and combines system and developer instructions", () => {
     const out = O2G({
       messages: [
         { role: "system", content: "RULE_ONE" },
-        { role: "system", content: "RULE_TWO" },
+        { role: "developer", content: "RULE_TWO" },
         { role: "user", content: "hi" },
       ],
     });
-    expect(JSON.stringify(out.systemInstruction), "earlier system lost").toContain("RULE_ONE");
+    expect(JSON.stringify(out.systemInstruction)).toContain("RULE_ONE");
+    expect(JSON.stringify(out.systemInstruction)).toContain("RULE_TWO");
+  });
+});
+
+describe("OpenAI → Gemini image parts", () => {
+  it("uses the Vertex/Gemini REST mimeType field for inline image data", () => {
+    const out = O2G({
+      messages: [{ role: "user", content: [
+        { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+      ] }],
+    });
+    expect(out.contents[0].parts[0]).toEqual({
+      inlineData: { mimeType: "image/png", data: "AAAA" },
+    });
   });
 });
 
