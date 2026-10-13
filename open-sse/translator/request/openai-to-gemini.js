@@ -9,19 +9,34 @@ function generateUUID() {
 
 // Move image data URLs embedded in tool output out of JSON/text and into native
 // Gemini image parts. Otherwise the base64 is counted as ordinary context text.
-function extractInlineImages(value, images = []) {
+function extractInlineImages(value, images = [], keyHint = "") {
   if (typeof value === "string") {
     const dataUrl = /data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)/g;
+    let foundDataUrl = false;
     const text = value.replace(dataUrl, (_match, mimeType, data) => {
+      foundDataUrl = true;
       images.push({ inlineData: { mimeType, data: data.replace(/\s/g, "") } });
       return "[image attached separately]";
     });
-    return text;
+    if (foundDataUrl) return text;
+
+    // Some file tools return a raw base64 image in an image/data field.
+    const compact = value.replace(/\s/g, "");
+    const mimeType = compact.startsWith("iVBORw0KGgo") ? "image/png"
+      : compact.startsWith("/9j/") ? "image/jpeg"
+      : compact.startsWith("R0lGOD") ? "image/gif"
+      : compact.startsWith("UklGR") ? "image/webp"
+      : null;
+    if (mimeType && /image|data|base64|bytes/i.test(keyHint)) {
+      images.push({ inlineData: { mimeType, data: compact } });
+      return "[image attached separately]";
+    }
+    return value;
   }
-  if (Array.isArray(value)) return value.map((item) => extractInlineImages(item, images));
+  if (Array.isArray(value)) return value.map((item) => extractInlineImages(item, images, keyHint));
   if (value && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, extractInlineImages(item, images)])
+      Object.entries(value).map(([key, item]) => [key, extractInlineImages(item, images, key)])
     );
   }
   return value;
