@@ -33,6 +33,24 @@ describe("OpenAI → Gemini image parts", () => {
       inlineData: { mimeType: "image/png", data: "AAAA" },
     });
   });
+
+  it("moves images in tool output into image parts instead of function response text", () => {
+    const out = O2G({
+      messages: [
+        { role: "assistant", content: null, tool_calls: [
+          { id: "c1", type: "function", function: { name: "read_file", arguments: "{}" } },
+        ] },
+        { role: "tool", tool_call_id: "c1", content: JSON.stringify({
+          image: "data:image/png;base64,AAAA",
+        }) },
+      ],
+    });
+    const parts = out.contents.flatMap((turn) => turn.parts);
+    expect(parts).toContainEqual({ inlineData: { mimeType: "image/png", data: "AAAA" } });
+    const functionResponse = parts.find((part) => part.functionResponse);
+    expect(JSON.stringify(functionResponse)).not.toContain("data:image/png;base64");
+    expect(JSON.stringify(functionResponse)).toContain("[image attached separately]");
+  });
 });
 
 describe("OpenAI → Cursor", () => {
