@@ -28,18 +28,20 @@ describe("Codex CLI Responses → OpenAI", () => {
     expect(typeof asst.tool_calls[0].function.arguments).toBe("string");
   });
 
-  // openai-responses.js:75-77 — input_image uses file_id as raw url
-  // KNOWN BUG
-  it.fails("input_image with file_id is not used as a raw url", () => {
+  it("accepts Responses image_url object and does not treat file_id as a URL", () => {
     const out = R2O({
       input: [{ type: "message", role: "user", content: [
+        { type: "input_image", image_url: { url: "https://example.test/image.png", detail: "high" } },
         { type: "input_image", file_id: "file-abc" },
       ] }],
     });
     const userMsg = out.messages.find((m) => m.role === "user");
-    const img = Array.isArray(userMsg?.content) ? userMsg.content.find((c) => c.type === "image_url") : null;
-    // A bare file_id is not a valid image URL
-    expect(img?.image_url?.url === "file-abc").toBe(false);
+    expect(userMsg.content[0]).toEqual({
+      type: "image_url",
+      image_url: { url: "https://example.test/image.png", detail: "high" },
+    });
+    expect(userMsg.content[1].type).toBe("text");
+    expect(userMsg.content[1].image_url).toBeUndefined();
   });
 });
 

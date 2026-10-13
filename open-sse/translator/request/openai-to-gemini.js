@@ -7,6 +7,41 @@ function generateUUID() {
   return crypto.randomUUID();
 }
 
+// Move image data URLs embedded in tool output out of JSON/text and into native
+// Gemini image parts. Otherwise the base64 is counted as ordinary context text.
+function extractInlineImages(value, images = [], keyHint = "") {
+  if (typeof value === "string") {
+    const dataUrl = /data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)/g;
+    let foundDataUrl = false;
+    const text = value.replace(dataUrl, (_match, mimeType, data) => {
+      foundDataUrl = true;
+      images.push({ inlineData: { mimeType, data: data.replace(/\s/g, "") } });
+      return "[image attached separately]";
+    });
+    if (foundDataUrl) return text;
+
+    // Some file tools return a raw base64 image in an image/data field.
+    const compact = value.replace(/\s/g, "");
+    const mimeType = compact.startsWith("iVBORw0KGgo") ? "image/png"
+      : compact.startsWith("/9j/") ? "image/jpeg"
+      : compact.startsWith("R0lGOD") ? "image/gif"
+      : compact.startsWith("UklGR") ? "image/webp"
+      : null;
+    if (mimeType && /image|data|base64|bytes/i.test(keyHint)) {
+      images.push({ inlineData: { mimeType, data: compact } });
+      return "[image attached separately]";
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((item) => extractInlineImages(item, images, keyHint));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, extractInlineImages(item, images, key)])
+    );
+  }
+  return value;
+}
+
 import {
   DEFAULT_SAFETY_SETTINGS,
   convertOpenAIContentToParts,
@@ -143,12 +178,17 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
       const role = msg.role;
       const content = msg.content;
 
-      if (role === ROLE.SYSTEM && body.messages.length > 1) {
-        result.systemInstruction = {
-          role: GEMINI_ROLE.USER,
-          parts: [{ text: typeof content === "string" ? content : extractTextContent(content) }]
-        };
-      } else if (role === ROLE.USER || (role === ROLE.SYSTEM && body.messages.length === 1)) {
+      if (role === ROLE.SYSTEM || role === ROLE.DEVELOPER) {
+        // Preserve all system-level instructions; Codex commonly sends developer
+        // instructions alongside system messages.
+        const text = typeof content === "string" ? content : extractTextContent(content);
+        if (text) {
+          if (!result.systemInstruction) {
+            result.systemInstruction = { role: GEMINI_ROLE.USER, parts: [] };
+          }
+          result.systemInstruction.parts.push({ text });
+        }
+      } else if (role === ROLE.USER) {
         const parts = convertOpenAIContentToParts(content);
         if (parts.length > 0) {
           result.contents.push({ role: GEMINI_ROLE.USER, parts });
@@ -253,6 +293,9 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
                 parsedResp = { result: parsedResp };
               }
 
+              const inlineImages = [];
+              parsedResp = extractInlineImages(parsedResp, inlineImages);
+
               toolParts.push({
                 functionResponse: {
                   // Matches the functionCall id emitted above, so a response
@@ -262,6 +305,7 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
                   response: { result: parsedResp }
                 }
               });
+              toolParts.push(...inlineImages);
             }
             if (toolParts.length > 0) {
               result.contents.push({ role: GEMINI_ROLE.USER, parts: toolParts });

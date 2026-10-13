@@ -86,8 +86,22 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
           if (c.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
           if (c.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
           if (c.type === RESPONSES_ITEM.INPUT_IMAGE) {
-            const url = c.image_url || c.file_id || "";
-            return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: c.detail || "auto" } };
+            // Responses accepts either a URL string or an image_url object.
+            // A file_id is not a URL and cannot be resolved by this gateway.
+            const url = typeof c.image_url === "string" ? c.image_url : c.image_url?.url;
+            if (!url) {
+              return {
+                type: OPENAI_BLOCK.TEXT,
+                text: "[Image file_id cannot be resolved by this gateway]"
+              };
+            }
+            return {
+              type: OPENAI_BLOCK.IMAGE_URL,
+              image_url: {
+                url,
+                detail: c.detail || (typeof c.image_url === "object" ? c.image_url.detail : undefined) || "auto"
+              }
+            };
           }
           return c;
         })
